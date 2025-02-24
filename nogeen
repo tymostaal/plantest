@@ -1,0 +1,96 @@
+# testplan/models.py
+from django.db import models
+
+# Main TestPlan record – every test plan (draft or final) is stored here.
+class TestPlan(models.Model):
+    title = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    # Additional fields (e.g., description, status, etc.) can be added as needed.
+
+    def __str__(self):
+        return self.title
+
+# Detailed steps for a TestPlan (used in the TestPlan Editor)
+class TestPlanStep(models.Model):
+    SECTION_CHOICES = (
+        ('preparation', 'Preparation Steps'),
+        ('execution', 'Execution Steps'),
+        ('wrapup', 'Wrap-Up Steps'),
+    )
+    testplan = models.ForeignKey(TestPlan, on_delete=models.CASCADE, related_name='steps')
+    step_order = models.PositiveIntegerField(default=0)
+    section = models.CharField(max_length=20, choices=SECTION_CHOICES)
+    step = models.CharField(max_length=255)
+    procedure = models.TextField(blank=True)
+    day_time_duration = models.CharField(max_length=100, blank=True)
+    nq_duration = models.CharField(max_length=100, blank=True)
+    executor = models.CharField(max_length=100, blank=True)
+    comments = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['section', 'step_order']
+
+    def __str__(self):
+        return f"{self.testplan.title} - {self.get_section_display()} - {self.step}"
+
+# ChecklistResponse stores answers to the fixed questions.
+class ChecklistResponse(models.Model):
+    testplan = models.ForeignKey(TestPlan, on_delete=models.CASCADE, related_name='checklist_responses')
+    responses = models.JSONField(default=dict)  # Stores all checklist responses as JSON.
+    saved_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Checklist for {self.testplan.title} saved at {self.saved_at}"
+
+# TestPlanTemplate: A saved template for reusing a test plan structure.
+class TestPlanTemplate(models.Model):
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    folder = models.CharField(max_length=255, blank=True, default="")  # Grouping field for organization.
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+# TemplateStep: Steps that belong to a TestPlanTemplate.
+class TemplateStep(models.Model):
+    SECTION_CHOICES = (
+        ('preparation', 'Preparation Steps'),
+        ('execution', 'Execution Steps'),
+        ('wrapup', 'Wrap-Up Steps'),
+    )
+    template = models.ForeignKey(TestPlanTemplate, on_delete=models.CASCADE, related_name='steps')
+    step_order = models.PositiveIntegerField(default=0)
+    section = models.CharField(max_length=20, choices=SECTION_CHOICES)
+    step = models.CharField(max_length=255)
+    procedure = models.TextField(blank=True)
+    day_time_duration = models.CharField(max_length=100, blank=True)
+    nq_duration = models.CharField(max_length=100, blank=True)
+    executor = models.CharField(max_length=100, blank=True)
+    comments = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['section', 'step_order']
+
+    def __str__(self):
+        return f"{self.template.name} - {self.get_section_display()} - {self.step}"
+
+# PredefinedStep: Individual reusable steps for use in a library.
+class PredefinedStep(models.Model):
+    CATEGORY_CHOICES = (
+        ('preparation', 'Preparation Steps'),
+        ('execution', 'Execution Steps'),
+        ('wrapup', 'Wrap-Up Steps'),
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    folder = models.CharField(max_length=255, blank=True, default="")  # For grouping in the library.
+    section = models.CharField(max_length=20, choices=CATEGORY_CHOICES)
+    procedure = models.TextField(blank=True)
+    day_time_duration = models.CharField(max_length=100, blank=True)
+    nq_duration = models.CharField(max_length=100, blank=True)
+    executor = models.CharField(max_length=100, blank=True)
+    comments = models.TextField(blank=True)
+
+    def __str__(self):
+        return self.name
