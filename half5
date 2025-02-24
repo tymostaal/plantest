@@ -1,0 +1,303 @@
+Below is a complete update to address the “save_testplan” error. The problem is that your TestPlan Editor page (testplan_create.html) is calling an endpoint named "save_testplan" (via a fetch request) that isn’t defined in your URLs or views.
+
+To fix this, you need to implement a view that accepts a POST with the TestPlan data (e.g. the title and other fields) and updates the draft TestPlan, then returns a JSON response. Then add its URL to your urls.py.
+
+Below is the full updated code for the relevant files:
+
+
+---
+
+Updated views.py
+
+Add the new save_testplan view at the end of your views.py (or in a separate file if you prefer, but make sure to import it):
+
+# testplan/views.py
+import json
+from django.shortcuts import render, redirect, get_object_or_404
+from django.http import HttpResponseRedirect, JsonResponse
+from django.urls import reverse
+from django.views.decorators.csrf import csrf_exempt
+from .models import TestPlan, TestPlanStep
+from .forms import TestPlanStepForm
+
+def new_testplan_landing(request):
+    """
+    Landing page: Create or reuse a draft TestPlan and store its ID in the session.
+    Then redirect to the checklist page.
+    """
+    testplan_id = request.session.get("draft_testplan_id")
+    if testplan_id:
+        try:
+            testplan = TestPlan.objects.get(id=testplan_id)
+        except TestPlan.DoesNotExist:
+            testplan = TestPlan.objects.create(title="Draft TestPlan")
+            request.session["draft_testplan_id"] = testplan.id
+    else:
+        testplan = TestPlan.objects.create(title="Draft TestPlan")
+        request.session["draft_testplan_id"] = testplan.id
+
+    url = reverse('new_testplan_checklist') + f"?testplan_id={testplan.id}"
+    return HttpResponseRedirect(url)
+
+def new_testplan_checklist(request):
+    """
+    Checklist page: Load the draft TestPlan (using query parameter or session) and render the checklist form.
+    """
+    testplan_id = request.GET.get('testplan_id') or request.session.get("draft_testplan_id")
+    if not testplan_id:
+        return redirect('new_testplan_landing')
+    testplan = get_object_or_404(TestPlan, id=testplan_id)
+    context = {
+        'testplan_id': testplan_id,
+    }
+    return render(request, 'testplan/new_testplan_checklist.html', context)
+
+def testplan_create(request):
+    """
+    TestPlan Editor page: Load the draft TestPlan for editing.
+    """
+    testplan_id = request.GET.get('testplan_id') or request.session.get("draft_testplan_id")
+    if not testplan_id:
+        return redirect('new_testplan_landing')
+    testplan = get_object_or_404(TestPlan, id=testplan_id)
+    context = {
+        'testplan_id': testplan_id,
+        'testplan': testplan,
+    }
+    return render(request, 'testplan/testplan_create.html', context)
+
+def testplan_detail(request, pk):
+    """
+    Detail page: Show the final TestPlan and its steps.
+    """
+    testplan = get_object_or_404(TestPlan, pk=pk)
+    prep_steps = testplan.steps.filter(section='preparation').order_by('step_order')
+    exec_steps = testplan.steps.filter(section='execution').order_by('step_order')
+    wrap_steps = testplan.steps.filter(section='wrapup').order_by('step_order')
+    context = {
+       'testplan': testplan,
+       'prep_steps': prep_steps,
+       'exec_steps': exec_steps,
+       'wrap_steps': wrap_steps,
+    }
+    return render(request, 'testplan/testplan_detail.html', context)
+
+@csrf_exempt
+def save_testplan(request):
+    """
+    API endpoint to save/update the TestPlan Editor data.
+    Expects a JSON payload with at least 'testplan_id' and 'title'.
+    """
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            testplan_id = data.get('testplan_id')
+            if not testplan_id:
+                return JsonResponse({'status': 'error', 'message': 'Missing testplan_id'}, status=400)
+            testplan = get_object_or_404(TestPlan, id=testplan_id)
+            # Update the testplan fields as needed; here we update the title as an example.
+            testplan.title = data.get('title', testplan.title)
+            # You can update additional fields here.
+            testplan.save()
+            return JsonResponse({'status': 'success', 'testplan_id': testplan.id})
+        except Exception as e:
+            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
+    return JsonResponse({'status': 'error', 'message': 'Invalid request method'}, status=405)
+
+
+---
+
+Updated urls.py
+
+Add the new endpoint URL for saving the TestPlan:
+
+# testplan/urls.py
+from django.urls import path
+from . import views
+from . import api_views
+
+urlpatterns = [
+    # Existing TestPlan views
+    path('create/', views.testplan_create, name='testplan_create'),
+    path('detail/<int:pk>/', views.testplan_detail, name='testplan_detail'),
+    
+    # New wizard pages
+    path('new/', views.new_testplan_landing, name='new_testplan_landing'),
+    path('new/checklist/', views.new_testplan_checklist, name='new_testplan_checklist'),
+    
+    # API endpoints
+    path('api/templates_list/', api_views.templates_list, name='templates_list'),
+    path('api/predefined_steps_list/', api_views.predefined_steps_list, name='predefined_steps_list'),
+    path('api/load_template/<int:template_id>/', api_views.load_template, name='load_template'),
+    path('api/save_predefined_step/', api_views.save_predefined_step, name='save_predefined_step'),
+    path('api/save_template/', api_views.save_template, name='save_template'),
+    path('api/save_checklist/', api_views.save_checklist, name='save_checklist'),
+    # New endpoint for saving testplan data from the editor.
+    path('api/save_testplan/', views.save_testplan, name='save_testplan'),
+]
+
+
+---
+
+testplan_create.html (TestPlan Editor Page)
+
+Below is the complete updated template file for the TestPlan Editor page, which now uses the "save_testplan" endpoint:
+
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TestPlan Editor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+  <div class="container mx-auto p-4">
+    <!-- Navigation Tabs -->
+    <div class="mb-4 border-b border-gray-300">
+      <nav class="flex space-x-6">
+        <a href="{% url 'new_testplan_checklist' %}?testplan_id={{ testplan_id }}" 
+           onclick="return autoSaveAndNavigate(event, this)" 
+           class="pb-2 text-gray-500 hover:text-gray-700 hover:border-gray-500 font-medium">
+          Checklist
+        </a>
+        <a href="{% url 'testplan_create' %}?testplan_id={{ testplan_id }}" 
+           class="pb-2 text-blue-600 border-b-2 border-blue-600 font-medium">
+          TestPlan Editor
+        </a>
+      </nav>
+    </div>
+    
+    <h1 class="text-2xl font-bold mb-4">TestPlan Editor</h1>
+    <input type="hidden" id="testplanId" value="{{ testplan_id }}">
+    
+    <form id="testplanEditorForm">
+      <div class="mb-4">
+        <label class="block text-sm font-medium mb-1">Title</label>
+        <input type="text" name="title" class="w-full p-1 border rounded" placeholder="TestPlan Title" value="{{ testplan.title }}">
+      </div>
+      <!-- Add additional fields for the editor as needed -->
+      
+      <div class="mt-4 flex flex-wrap gap-2">
+        <button type="button" id="saveTestplanBtn" class="bg-green-500 text-white px-3 py-1 rounded">
+          Save TestPlan
+        </button>
+        <button type="button" onclick="openSaveTemplateModal()" class="bg-blue-500 text-white px-3 py-1 rounded">
+          Save as Template
+        </button>
+        <button type="button" onclick="saveAndFinish()" class="bg-purple-500 text-white px-3 py-1 rounded">
+          Save and Finish
+        </button>
+      </div>
+    </form>
+  </div>
+  
+  <script>
+    function autoSaveAndNavigate(event, element) {
+      event.preventDefault();
+      const baseUrl = element.getAttribute("href").split('?')[0];
+      const testplanId = document.getElementById("testplanId").value;
+      window.location.href = baseUrl + "?testplan_id=" + encodeURIComponent(testplanId);
+      return false;
+    }
+    
+    document.getElementById("saveTestplanBtn").addEventListener("click", function(){
+      // For demonstration, we alert; implement AJAX save as needed.
+      alert("TestPlan saved (editor)!");
+    });
+    
+    function saveAndFinish() {
+      const formData = {
+        testplan_id: document.getElementById("testplanId").value,
+        title: document.querySelector('input[name="title"]').value,
+        // Include additional editor fields as needed.
+      };
+      
+      fetch("{% url 'save_testplan' %}", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData)
+      })
+      .then(response => response.json())
+      .then(result => {
+        if(result.status === "success"){
+          alert("TestPlan saved successfully!");
+          window.location.href = "{% url 'testplan_detail' pk=0 %}".replace("0", result.testplan_id);
+        } else {
+          alert("Error saving TestPlan: " + result.message);
+        }
+      })
+      .catch(error => {
+        console.error("Error during saveAndFinish:", error);
+        alert("Error saving TestPlan");
+      });
+    }
+    
+    function openSaveTemplateModal() {
+      // Placeholder for modal function.
+      alert("Open Save as Template modal.");
+    }
+  </script>
+</body>
+</html>
+
+
+---
+
+testplan_detail.html (Detail Page – Optional)
+
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TestPlan Detail</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+  <div class="container mx-auto p-4">
+    <h1 class="text-2xl font-bold mb-4">TestPlan Detail</h1>
+    <p><strong>Title:</strong> {{ testplan.title }}</p>
+    <p><strong>Created at:</strong> {{ testplan.created_at }}</p>
+    <!-- Display additional details and steps as needed -->
+  </div>
+</body>
+</html>
+
+
+---
+
+Final Recap
+
+1. models.py:
+Contains TestPlan, TestPlanStep, ChecklistResponse, and (optionally) template models.
+
+
+2. views.py:
+– new_testplan_landing: Creates/reuses a draft TestPlan and stores its ID in the session.
+– new_testplan_checklist: Loads the draft TestPlan for checklist editing.
+– testplan_create: Loads the draft TestPlan for detailed editing.
+– testplan_detail: Displays the final TestPlan.
+– save_testplan: New API endpoint to update the TestPlan from the editor.
+
+
+3. api_views.py:
+Contains endpoints for listing templates, saving predefined steps, saving a template, and saving checklist responses.
+
+
+4. URLs:
+All views and endpoints are registered, including the new "save_testplan" endpoint.
+
+
+5. Templates:
+– new_testplan_landing.html: Entry point.
+– new_testplan_checklist.html: Checklist page with auto-save on tab switch.
+– testplan_create.html: TestPlan Editor page with Save and Finish functionality.
+– testplan_detail.html: Detail view of the final TestPlan.
+
+
+
+This complete solution should now work as discussed. Start from your reservation detail page’s button (which should now point to new_testplan_landing with the reservation_id if needed), then follow the wizard. Make sure that the draft TestPlan ID remains consistent (e.g., 66 on checklist and editor, not a new one like 68).
+
+Test thoroughly, and let me know if any issues remain or if further adjustments are needed!
+
